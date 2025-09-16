@@ -7,6 +7,9 @@ from tkinter import ttk, messagebox
 import json
 import socket
 from PIL import ImageGrab
+import matplotlib.pyplot as plt
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Image as RLImage
+from reportlab.lib.styles import getSampleStyleSheet
 
 # --- Funciones ---
 def gather_processes():
@@ -46,10 +49,10 @@ def show_processes(tree, filter_text=""):
                 continue
         item_id = tree.insert("", tk.END, values=(p['name'], p['exe'], p['pid'], p['time'], p['status'], p['path']))
         if p['status'] == "Signed":
-            tree.tag_configure(f"signed_{item_id}", foreground="green")
+            tree.tag_configure(f"signed_{item_id}", foreground="#55ff55")
             tree.item(item_id, tags=(f"signed_{item_id}",))
         else:
-            tree.tag_configure(f"deleted_{item_id}", foreground="red")
+            tree.tag_configure(f"deleted_{item_id}", foreground="#ff5555")
             tree.item(item_id, tags=(f"deleted_{item_id}",))
 
 def open_location(path):
@@ -91,21 +94,21 @@ def search_callback(tree, entry):
 def generate_report(tree):
     report_win = tk.Toplevel(root)
     report_win.title("Kyrelix - Generar Informe")
-    report_win.geometry("500x300")
+    report_win.geometry("500x350")
     report_win.configure(bg="#2b2b2b")
 
     tk.Label(report_win, text="Generar Informe", bg="#2b2b2b", fg="#ffffff", font=("Arial", 12, "bold")).pack(pady=5)
-
+    
     tk.Label(report_win, text="Nombre de la PC:", bg="#2b2b2b", fg="#ffffff").pack()
-    pc_name_entry = tk.Entry(report_win, bg="#1f1f1f", fg="#ffffff")
+    tk.Label(report_win, text="Bloqueado", fg="#ff5555", bg="#2b2b2b", font=("Arial", 8)).pack()
+    pc_name_entry = tk.Entry(report_win, bg="#1f1f1f", fg="#000000")
     pc_name_entry.pack(fill=tk.X, padx=10)
     pc_name_entry.insert(0, socket.gethostname())
     pc_name_entry.config(state="readonly")
 
-    tk.Label(report_win, text="Nickname del jugador:", bg="#2b2b2b", fg="#ffffff").pack()
+    tk.Label(report_win, text="Nickname del jugador:", bg="#2b2b2b", fg="#ffffff").pack() 
     nickname_entry = tk.Entry(report_win, bg="#1f1f1f", fg="#ffffff")
     nickname_entry.pack(fill=tk.X, padx=10)
-
 
     selected_process = {"values": None}
     selected_label = tk.Label(report_win, text="No seleccionado", bg="#2b2b2b", fg="#ffffff")
@@ -113,7 +116,7 @@ def generate_report(tree):
 
     def select_process():
         sel_win = tk.Toplevel(report_win)
-        sel_win.title("Seleccionar proceso sospechoso")
+        sel_win.title("Seleccionar proceso")
         sel_win.geometry("600x400")
         sel_win.configure(bg="#2b2b2b")
 
@@ -155,11 +158,12 @@ def generate_report(tree):
             messagebox.showwarning("Aviso", "Ingresa el nickname del jugador")
             return
         if not selected_process["values"]:
-            messagebox.showwarning("Aviso", "Selecciona un proceso sospechoso")
+            messagebox.showwarning("Aviso", "Selecciona un proceso")
             return
 
         folder = "Informe_SS"
         os.makedirs(folder, exist_ok=True)
+                    
         report_data = {
             "PC": pc_name_entry.get(),
             "Nickname": nickname,
@@ -168,12 +172,41 @@ def generate_report(tree):
         json_path = os.path.join(folder, "log.json")
         with open(json_path, "w") as f:
             json.dump(report_data, f, indent=4)
-
         screenshot_path = os.path.join(folder, "screenshot.png")
         ImageGrab.grab().save(screenshot_path)
-        messagebox.showinfo("Éxito", f"Informe generado en carpeta '{folder}'")
 
-    tk.Button(report_win, text="Seleccionar proceso sospechoso", command=select_process, bg="#1f1f1f", fg="#ffffff").pack(pady=5)
+        procs = gather_processes()
+        nombres = [p['name'] for p in procs]
+        conteos = [1]*len(procs) 
+
+        plt.figure(figsize=(8,5))
+        plt.bar(nombres, conteos, color="#55aaff")
+        plt.xticks(rotation=45, ha="right")
+        plt.title("Procesos capturados actualmente")
+        plt.tight_layout()
+        graph_path = os.path.join(folder, "grafico.png")
+        plt.savefig(graph_path)
+        plt.close()
+
+        pdf_path = os.path.join(folder, "informe.pdf")
+        doc = SimpleDocTemplate(pdf_path)
+        styles = getSampleStyleSheet()
+        content = []
+        content.append(Paragraph("<b>Informe SS</b>", styles['Title']))
+        content.append(Paragraph(f"Fecha: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}", styles['Normal']))
+        content.append(Spacer(1,20))
+        content.append(Paragraph(f"PC: {pc_name_entry.get()}", styles['Normal']))
+        content.append(Paragraph(f"Nickname: {nickname}", styles['Normal']))
+        content.append(Paragraph(f"Proceso seleccionado: {selected_process['values'][0]} (PID {selected_process['values'][2]})", styles['Normal']))
+        content.append(Spacer(1,20))
+        content.append(RLImage(graph_path, width=400, height=250))
+        content.append(Spacer(1,20))
+        content.append(RLImage(screenshot_path, width=400, height=250))
+        doc.build(content)
+
+        messagebox.showinfo("Éxito", f"Informe generado en '{folder}'")
+
+    tk.Button(report_win, text="Seleccionar proceso", command=select_process, bg="#1f1f1f", fg="#ffffff").pack(pady=5)
     tk.Button(report_win, text="Generar Informe", command=save_report, bg="#1f1f1f", fg="#ffffff").pack(pady=5)
 
 def open_recent_apps():
@@ -202,8 +235,7 @@ def open_recent_apps():
     for col in columns:
         tree_recent.heading(col, text=col)
         tree_recent.column(col, width=150, anchor=tk.W)
-
-    # Llenar tabla
+        
     for p in gather_processes():
         item_id = tree_recent.insert("", tk.END, values=(p['time'], p['exe'], p['path'], "Abrir", p['status']))
         if p['status'] == "Signed":
@@ -212,7 +244,6 @@ def open_recent_apps():
         else:
             tree_recent.tag_configure(f"deleted_{item_id}", foreground="red")
             tree_recent.item(item_id, tags=(f"deleted_{item_id}",))
-
 
     def open_path(event):
         sel = tree_recent.selection()
@@ -239,6 +270,7 @@ def open_recent_apps():
                     tree_recent.item(item_id, tags=(f"deleted_{item_id}",))
 
     search_entry.bind("<KeyRelease>", search_recent)
+
 
 dark_mode_flag = [True]
 root = tk.Tk()
@@ -301,5 +333,4 @@ style.configure("Treeview.Heading", background="#1f1f1f", foreground="#ffffff")
 root.configure(bg="#2b2b2b")
 
 show_processes(tree)
-
 root.mainloop()
